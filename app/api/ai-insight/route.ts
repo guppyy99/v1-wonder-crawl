@@ -254,12 +254,12 @@ export async function POST(req: Request) {
 
     // gpt-5.1-chat-latest 호출
     const completion = await openai.chat.completions.create({
-      model: 'gpt-5.1-chat-latest',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: '당신은 보험/부업 마케팅 전략을 만드는 전문가입니다.' },
         { role: 'user', content: prompt },
       ],
-      max_tokens: 600,
+      max_tokens: 1200,
       temperature: 0.2,
     })
 
