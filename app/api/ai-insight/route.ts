@@ -163,7 +163,7 @@ ${webSearchResults ? `\n# 실제 웹 검색 결과 (네이버/구글 최신 정�
         ],
         reasoning_effort: 'medium',
         verbosity: 'medium',
-        max_tokens: 600,
+        max_output_tokens: 600,
       }),
     })
     
