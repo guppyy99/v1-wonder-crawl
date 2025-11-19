@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { CalendarHeader } from "@/components/calendar-header"
 import { AIInsight } from "@/components/ai-insight"
 import { KeywordSelector } from "@/components/keyword-selector"
@@ -8,6 +8,7 @@ import { TrendChart } from "@/components/trend-chart"
 import { Footer } from "@/components/footer"
 import { parseCSV, calculateMonthlyGrowth } from "@/lib/csv-parser"
 import type { KeywordData } from "@/lib/types"
+import { toast } from "@/hooks/use-toast"
 
 export default function Page() {
   const [selectedYear, setSelectedYear] = useState(2025)
@@ -17,6 +18,16 @@ export default function Page() {
   const [keywordData, setKeywordData] = useState<KeywordData>({})
   const [topKeywords, setTopKeywords] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [limitShake, setLimitShake] = useState(false)
+  const limitTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (limitTimeoutRef.current) {
+        clearTimeout(limitTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // CSV 데이터 로드
   useEffect(() => {
@@ -55,10 +66,24 @@ export default function Page() {
       if (prev.includes(keyword)) {
         return prev.filter((k) => k !== keyword)
       } else {
+        if (prev.length >= 3) {
+          if (limitTimeoutRef.current) {
+            clearTimeout(limitTimeoutRef.current)
+          }
+          setLimitShake(true)
+          limitTimeoutRef.current = setTimeout(() => setLimitShake(false), 600)
+          toast({
+            title: "키워드는 최대 3개까지 선택할 수 있어요.",
+            description: "AI 인사이트 비교는 3개 키워드까지만 지원돼요.",
+          })
+          return prev
+        }
         return [...prev, keyword]
       }
     })
   }
+
+  const limitReached = selectedKeywords.length >= 3
 
   if (loading) {
     return (
@@ -89,10 +114,11 @@ export default function Page() {
           onMonthChange={setSelectedMonth}
         />
 
-        <AIInsight 
+        <AIInsight
           selectedYear={selectedYear}
-          selectedMonth={selectedMonth} 
-          keywordData={keywordData} 
+          selectedMonth={selectedMonth}
+          keywordData={keywordData}
+          selectedKeywords={selectedKeywords}
         />
 
         <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[320px_1fr]">
@@ -103,6 +129,8 @@ export default function Page() {
             keywordData={keywordData}
             selectedYear={selectedYear}
             selectedMonth={selectedMonth}
+            limitReached={limitReached}
+            limitShake={limitShake}
           />
 
           <TrendChart

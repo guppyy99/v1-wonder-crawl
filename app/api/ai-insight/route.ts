@@ -5,6 +5,28 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
+interface PreviousMonthPayload {
+  month: string
+  volume: number
+}
+
+interface KeywordRequestPayload {
+  keyword: string
+  growth: number
+  volume: number
+  previousMonths: PreviousMonthPayload[]
+}
+
+type EnrichedKeywordPayload = KeywordRequestPayload & {
+  monthOverMonth: string
+  trendText: string
+  webSearchResults: string
+  category: KeywordCategory
+}
+
+const numberFormatter = new Intl.NumberFormat('ko-KR')
+const formatNumber = (value: number) => numberFormatter.format(Math.max(0, Math.round(value)))
+
 /**
  * ────────────────────────────────────────────────
  * Serper 웹검색
@@ -276,6 +298,74 @@ ${p.webSearchResults || '관련 이슈 없음'}
 `
 }
 
+function buildMultiKeywordPrompt({
+  year,
+  month,
+  keywords,
+}: {
+  year: number
+  month: number
+  keywords: EnrichedKeywordPayload[]
+}) {
+  const keywordBlocks = keywords
+    .map((item, idx) => `키워드 ${idx + 1}: ${item.keyword}
+- 카테고리: ${item.category}
+- 검색량: ${formatNumber(item.volume)}건 / 평균 대비 ${item.growth.toFixed(1)}% / 전월 대비 ${item.monthOverMonth}%
+- 최근 6개월 추이: ${item.trendText || '데이터 없음'}
+- 웹 검색 요약: ${item.webSearchResults || '관련 이슈 없음'}`)
+    .join('\n\n')
+
+  return `
+당신은 원더(Wonder)의 검색 인텔리전스 컨설턴트입니다.
+
+${WONDER_BASE}
+
+분석 대상 (${year}년 ${String(month).padStart(2, '0')}월):
+${keywordBlocks}
+
+작성 목표:
+1. comparison 필드에는 키워드들 간의 정량 비교를 3~4문장으로 작성합니다. 검색량, 평균 대비 증감률, 전월 대비 수치를 활용해 우위와 약점을 비교하세요.
+2. keywordInsights 배열의 각 항목에는 keyword, category, reason, strategy 필드가 모두 포함되어야 합니다.
+   - reason: 1~2문장으로 상승/하락 이유를 설명하고, 웹 검색 요약이 엔터테인먼트 중심이면 그 사실을 명시하세요.
+   - strategy: Wonder USP를 활용한 마케팅 제안이나 메시지를 1~2문장으로 제시하세요.
+3. 모든 문장은 한국어 문장형으로 작성하고, 불릿포인트나 코드블록, 이모지를 사용하지 마세요.
+4. 출력은 JSON 문자열 한 개로만 반환하세요. 예시:
+{
+  "comparison": "문장",
+  "keywordInsights": [
+    {
+      "keyword": "키워드명",
+      "category": "insurance",
+      "reason": "문장",
+      "strategy": "문장"
+    }
+  ]
+}
+`
+}
+
+function extractJson(text: string) {
+  if (!text) return null
+  const cleaned = text.replace(/```json|```/g, '').trim()
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  if (start === -1 || end === -1) return null
+  return cleaned.slice(start, end + 1)
+}
+
+function parseInsightResponse(text: string) {
+  const jsonText = extractJson(text)
+  if (!jsonText) return null
+  try {
+    const parsed = JSON.parse(jsonText)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    return parsed
+  } catch (error) {
+    console.error('JSON 파싱 실패:', error)
+    return null
+  }
+}
+
 /**
  * ────────────────────────────────────────────────
  * POST Handler
@@ -283,52 +373,75 @@ ${p.webSearchResults || '관련 이슈 없음'}
  */
 export async function POST(req: Request) {
   try {
-    const body = await req.json()
-    const {
-      keyword,
-      growth,
-      volume,
-      year,
-      month,
-      previousMonths = [],
-    } = body
-
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ error: 'OpenAI API key가 없습니다.' }, { status: 500 })
     }
 
-    const webSearchResults = await searchWeb(keyword, year, month)
+    const body = await req.json()
+    const { keywords, year, month } = body
 
-    const trendText =
-      previousMonths
-        .map((m: any) => `${m.month}: ${m.volume.toLocaleString()}건`)
-        .join(', ') || ''
-
-    const prevMonth = previousMonths[previousMonths.length - 2]
-    const prevVol = prevMonth?.volume || 0
-    const monthOverMonth =
-      prevVol > 0 ? (((volume - prevVol) / prevVol) * 100).toFixed(1) : '0'
-
-    const category = classifyKeyword(keyword)
-
-    const params = {
-      keyword,
-      growth,
-      volume,
-      year,
-      month,
-      previousMonths,
-      monthOverMonth,
-      trendText,
-      webSearchResults,
+    if (!Array.isArray(keywords) || keywords.length === 0) {
+      return NextResponse.json(
+        { error: '최소 1개의 키워드가 필요합니다.' },
+        { status: 400 },
+      )
     }
 
-    const prompt =
-      category === 'insurance'
-        ? buildInsurancePrompt(params)
-        : category === 'sidejob'
-        ? buildSideJobPrompt(params)
-        : buildGenericPrompt(params)
+    if (!year || !month) {
+      return NextResponse.json(
+        { error: 'year와 month 값을 전달해주세요.' },
+        { status: 400 },
+      )
+    }
+
+    const normalizedKeywords: KeywordRequestPayload[] = keywords
+      .slice(0, 3)
+      .map((item: any) => ({
+        keyword: String(item.keyword || '').trim(),
+        growth: Number(item.growth) || 0,
+        volume: Number(item.volume) || 0,
+        previousMonths: Array.isArray(item.previousMonths)
+          ? item.previousMonths.slice(-6).map((prev: any) => ({
+              month: String(prev.month || ''),
+              volume: Number(prev.volume) || 0,
+            }))
+          : [],
+      }))
+      .filter((item) => item.keyword.length > 0)
+
+    if (normalizedKeywords.length === 0) {
+      return NextResponse.json(
+        { error: '유효한 키워드를 찾을 수 없습니다.' },
+        { status: 400 },
+      )
+    }
+
+    const enrichedKeywords: EnrichedKeywordPayload[] = await Promise.all(
+      normalizedKeywords.map(async (item) => {
+        const trendText =
+          item.previousMonths
+            .map((m) => `${m.month}: ${formatNumber(m.volume)}건`)
+            .join(', ') || ''
+
+        const prevMonth = item.previousMonths[item.previousMonths.length - 2]
+        const prevVol = prevMonth?.volume || 0
+        const monthOverMonth =
+          prevVol > 0 ? (((item.volume - prevVol) / prevVol) * 100).toFixed(1) : '0'
+
+        const webSearchResults = await searchWeb(item.keyword, year, month)
+        const category = classifyKeyword(item.keyword)
+
+        return {
+          ...item,
+          trendText,
+          monthOverMonth,
+          webSearchResults,
+          category,
+        }
+      })
+    )
+
+    const prompt = buildMultiKeywordPrompt({ year, month, keywords: enrichedKeywords })
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4.1',
@@ -344,11 +457,35 @@ export async function POST(req: Request) {
       temperature: 0.2,
     })
 
-    const insight =
-      completion.choices?.[0]?.message?.content ||
-      '인사이트 생성 실패: 응답 없음'
+    const insightText = completion.choices?.[0]?.message?.content?.trim() || ''
+    const parsed = parseInsightResponse(insightText)
+    const parsedPayload = parsed && typeof parsed.comparison === 'string'
+      ? {
+          comparison: parsed.comparison,
+          keywordInsights: Array.isArray(parsed.keywordInsights)
+            ? parsed.keywordInsights
+                .map((item: any) => ({
+                  keyword: String(item.keyword || '').trim(),
+                  category: item.category,
+                  reason: item.reason || '',
+                  strategy: item.strategy || '',
+                }))
+                .filter((item: any) => item.keyword.length > 0)
+            : [],
+        }
+      : null
 
-    return NextResponse.json({ insight, category })
+    const responsePayload = parsedPayload ?? {
+      comparison: insightText || '인사이트 생성 실패: 응답 없음',
+      keywordInsights: normalizedKeywords.map((item) => ({
+        keyword: item.keyword,
+        category: classifyKeyword(item.keyword),
+        reason: 'AI 응답을 파싱하지 못했습니다.',
+        strategy: 'Wonder 전략 제안을 다시 생성해주세요.',
+      })),
+    }
+
+    return NextResponse.json(responsePayload)
   } catch (err: any) {
     console.error('AI 인사이트 생성 오류:', err)
     return NextResponse.json(
