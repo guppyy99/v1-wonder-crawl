@@ -212,7 +212,7 @@ export async function POST(req: Request) {
         },
         { role: 'user', content: prompt },
       ],
-      max_tokens: 1500,
+      max_completion_tokens: 1500,
       temperature: 0.2,
       top_p: 1,
       frequency_penalty: 0.2,
