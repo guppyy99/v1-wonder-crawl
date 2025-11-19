@@ -11,6 +11,8 @@ interface KeywordSelectorProps {
   keywordData: KeywordData
   selectedYear: number
   selectedMonth: number
+  limitReached?: boolean
+  limitShake?: boolean
 }
 
 // 평균 대비 상승률 계산 (메인 페이지와 동일한 로직)
@@ -52,19 +54,25 @@ export const getKeywordColor = (index: number) => {
   return COLOR_PALETTE[index % COLOR_PALETTE.length]
 }
 
-export function KeywordSelector({ 
-  keywords, 
-  selectedKeywords, 
+export function KeywordSelector({
+  keywords,
+  selectedKeywords,
   onKeywordToggle,
   keywordData,
   selectedYear,
-  selectedMonth
+  selectedMonth,
+  limitReached = false,
+  limitShake = false
 }: KeywordSelectorProps) {
   const [showAll, setShowAll] = useState(false)
   const displayKeywords = showAll ? keywords : keywords.slice(0, 10)
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+    <div
+      className={`rounded-lg border border-gray-200 bg-white p-6 shadow-sm transition-transform ${
+        limitShake ? 'keyword-limit-shake' : ''
+      }`}
+    >
       <h3 className="mb-4 text-lg font-medium text-gray-700 text-center">Keyword</h3>
       <div className="max-h-[600px] overflow-y-auto pr-2 space-y-2">
         {displayKeywords.map((keyword, index) => {
@@ -110,7 +118,7 @@ export function KeywordSelector({
         })}
         
         {keywords.length > 10 && (
-          <button 
+          <button
             onClick={() => setShowAll(!showAll)}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-500 hover:bg-gray-100"
           >
@@ -119,6 +127,13 @@ export function KeywordSelector({
           </button>
         )}
       </div>
+      <p
+        className={`mt-4 text-center text-xs ${
+          limitReached ? 'text-purple-600 font-semibold animate-in zoom-in duration-300' : 'text-gray-400'
+        }`}
+      >
+        {limitReached ? '최대 3개의 키워드를 선택했습니다.' : 'AI 인사이트 비교는 최대 3개의 키워드로 진행돼요.'}
+      </p>
     </div>
   )
 }

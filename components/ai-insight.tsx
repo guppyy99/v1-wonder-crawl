@@ -1,194 +1,282 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Sparkles } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { Sparkles, RefreshCw } from "lucide-react"
 import { calculateMonthlyGrowth } from "@/lib/csv-parser"
-import type { KeywordData } from "@/lib/types"
+import type { KeywordData, KeywordInfo } from "@/lib/types"
+
+interface PreviousMonthData {
+  month: string
+  volume: number
+}
+
+interface KeywordMetrics {
+  keyword: string
+  growth: number
+  volume: number
+  previousMonths: PreviousMonthData[]
+}
+
+interface ApiKeywordInsight {
+  keyword: string
+  category?: string
+  reason: string
+  strategy: string
+}
+
+interface InsightViewState {
+  comparison: string
+  keywordInsights: Array<ApiKeywordInsight & { metrics: KeywordMetrics }>
+}
 
 interface AIInsightProps {
   selectedYear: number
   selectedMonth: number
   keywordData: KeywordData
+  selectedKeywords: string[]
 }
 
-export function AIInsight({ selectedYear, selectedMonth, keywordData }: AIInsightProps) {
-  const [insight, setInsight] = useState<string>("")
-  const [loading, setLoading] = useState(false)
-  const [topKeyword, setTopKeyword] = useState<string>("")
-  const [hasGenerated, setHasGenerated] = useState(false)
+function buildPreviousMonths(
+  keywordInfo: KeywordInfo | undefined,
+  selectedYear: number,
+  selectedMonth: number,
+  range = 6
+): PreviousMonthData[] {
+  const result: PreviousMonthData[] = []
 
-  // 월이 변경되면 인사이트 리셋
+  for (let i = range - 1; i >= 0; i--) {
+    const targetDate = new Date(selectedYear, selectedMonth - 1)
+    targetDate.setMonth(targetDate.getMonth() - i)
+
+    const monthKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`
+    const formatted = `${targetDate.getFullYear()}.${String(targetDate.getMonth() + 1).padStart(2, '0')}`
+    const volume = keywordInfo?.monthlyData[monthKey] || 0
+
+    result.push({ month: formatted, volume })
+  }
+
+  return result
+}
+
+function summarizeCategory(category?: string) {
+  if (category === 'insurance') return '보험'
+  if (category === 'sidejob') return '부업·N잡'
+  return '기타'
+}
+
+export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKeywords }: AIInsightProps) {
+  const [insight, setInsight] = useState<InsightViewState | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [hasGenerated, setHasGenerated] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string>("")
+
+  const keywordSignature = useMemo(() => selectedKeywords.join('|'), [selectedKeywords])
+
   useEffect(() => {
     setHasGenerated(false)
-    setInsight("")
-    setTopKeyword("")
-  }, [selectedYear, selectedMonth])
+    setInsight(null)
+    setErrorMessage("")
+  }, [selectedYear, selectedMonth, keywordSignature])
+
+  const prepareKeywordPayload = (): KeywordMetrics[] => {
+    if (selectedKeywords.length === 0) return []
+    const growthData = calculateMonthlyGrowth(keywordData, selectedYear, selectedMonth)
+    const growthMap = new Map(growthData.map((item) => [item.keyword, item]))
+
+    return selectedKeywords.slice(0, 3).map((keyword) => {
+      const metrics = growthMap.get(keyword)
+      const keywordInfo = keywordData[keyword]
+
+      if (!metrics || !keywordInfo) return null
+
+      return {
+        keyword,
+        growth: metrics.growth,
+        volume: metrics.volume,
+        previousMonths: buildPreviousMonths(keywordInfo, selectedYear, selectedMonth),
+      }
+    }).filter((item): item is KeywordMetrics => item !== null)
+  }
 
   const generateInsight = async () => {
-    if (Object.keys(keywordData).length === 0) return
-
-    setLoading(true)
-    setHasGenerated(true)
-    
-    // 해당 월의 상승폭이 가장 큰 키워드 찾기
-    const growthData = calculateMonthlyGrowth(keywordData, selectedYear, selectedMonth)
-    
-    if (growthData.length === 0) {
-      setInsight("해당 월의 데이터가 없습니다.")
-      setLoading(false)
+    if (selectedKeywords.length === 0) {
+      setErrorMessage('AI 인사이트를 생성하려면 키워드를 최소 1개 이상 선택해주세요.')
       return
     }
 
-    const top = growthData[0]
-    setTopKeyword(top.keyword)
+    const keywordPayload = prepareKeywordPayload()
 
-    // 최근 6개월 데이터 추출
-    const keywordInfo = keywordData[top.keyword]
-    const previousMonths = []
-    
-    if (keywordInfo) {
-      for (let i = 5; i >= 0; i--) {
-        const targetDate = new Date(selectedYear, selectedMonth - 1)
-        targetDate.setMonth(targetDate.getMonth() - i)
-        
-        const monthKey = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, '0')}`
-        const volume = keywordInfo.monthlyData[monthKey] || 0
-        
-        previousMonths.push({
-          month: `${targetDate.getFullYear()}.${String(targetDate.getMonth() + 1).padStart(2, '0')}`,
-          volume: volume
-        })
-      }
+    if (keywordPayload.length === 0) {
+      setErrorMessage(`${selectedMonth}월에 대한 데이터가 있는 키워드를 선택해주세요.`)
+      return
     }
 
+    setLoading(true)
+    setHasGenerated(true)
+    setErrorMessage("")
+
     try {
-      // GPT API 호출 (실제 검색 데이터 포함)
       const response = await fetch('/api/ai-insight', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          keyword: top.keyword,
-          growth: top.growth,
-          volume: top.volume,
+          keywords: keywordPayload,
           year: selectedYear,
           month: selectedMonth,
-          previousMonths: previousMonths,
         }),
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        console.log('✅ AI 인사이트 성공:', data)
-        setInsight(data.insight)
-      } else {
+      if (!response.ok) {
         const errorData = await response.json()
-        console.error('❌ AI API 호출 실패:', response.status, errorData)
-        
-        // API 호출 실패 시 에러 메시지 표시
-        setInsight(
-          `⚠️ AI 인사이트 생성 실패: ${errorData.error || '알 수 없는 오류'}. 환경변수(OPENAI_API_KEY)를 확인해주세요.`
-        )
+        throw new Error(errorData.error || 'AI 인사이트 생성에 실패했습니다.')
       }
+
+      const data: { comparison?: string; keywordInsights?: ApiKeywordInsight[] } = await response.json()
+      const keywordMap = new Map((data.keywordInsights || []).map((item) => [item.keyword, item]))
+
+      const orderedInsights = keywordPayload.map((payload) => {
+        const ai = keywordMap.get(payload.keyword)
+        return {
+          keyword: payload.keyword,
+          category: ai?.category,
+          reason: ai?.reason || '이 키워드에 대한 분석 문장을 확보하지 못했습니다.',
+          strategy: ai?.strategy || 'Wonder와 연결된 전략 제안이 수신되지 않았습니다.',
+          metrics: payload,
+        }
+      })
+
+      setInsight({
+        comparison: data.comparison || '선택한 키워드들의 상대적인 포지션을 강조하는 비교 문장이 필요합니다.',
+        keywordInsights: orderedInsights,
+      })
     } catch (error: any) {
-      console.error('❌ AI 인사이트 생성 중 네트워크 오류:', error)
-      // 오류 발생 시 에러 메시지 표시
-      setInsight(
-        `⚠️ 네트워크 오류: ${error.message}. API 서버 연결을 확인해주세요.`
-      )
+      console.error('❌ AI 인사이트 생성 오류:', error)
+      setErrorMessage(error.message || 'AI 인사이트 생성 중 문제가 발생했습니다.')
     } finally {
       setLoading(false)
     }
   }
 
+  const gridCols = insight?.keywordInsights.length === 3
+    ? 'md:grid-cols-3'
+    : insight?.keywordInsights.length === 2
+    ? 'md:grid-cols-2'
+    : 'md:grid-cols-1'
+
   return (
     <div className="mt-6 flex justify-center">
-      <div 
-        className={`relative overflow-hidden transition-all duration-700 ease-in-out ${
-          hasGenerated 
-            ? 'w-full rounded-full' 
-            : 'w-auto rounded-full'
-        }`}
-      >
-        {!hasGenerated ? (
-          // 인사이트 생성 버튼
-          <button
-            onClick={generateInsight}
-            disabled={loading || Object.keys(keywordData).length === 0}
-            className="group relative flex items-center gap-2 rounded-full px-8 py-3.5 text-white font-semibold shadow-md hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 overflow-hidden"
-          >
-            {/* 기본 그라데이션 (부드러운 색상) */}
-            <div 
-              className="absolute inset-0 bg-gradient-to-r from-[#F2B0ED] to-[#CAB2F4] transition-opacity duration-500"
-            />
-            
-            {/* 호버 그라데이션 (쨍한 색상) */}
-            <div 
-              className="absolute inset-0 bg-gradient-to-r from-[#E85DD7] to-[#9D7DE8] opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-            />
-            
-            <Sparkles className="h-5 w-5 relative z-10 group-hover:rotate-12 transition-transform duration-300" />
-            <span className="relative z-10">{selectedMonth}월 인사이트 생성</span>
-          </button>
-        ) : (
-          // 인사이트 결과 표시 (버튼에서 확장되는 애니메이션)
-          <div className="w-full bg-white px-6 py-5 relative rounded-full">
-            {/* 그라데이션 테두리 */}
-            <div className="absolute inset-0 rounded-full p-[2px] bg-gradient-to-r from-[#F2B0ED] to-[#CAB2F4]">
-              <div className="h-full w-full rounded-full bg-white" />
-            </div>
-            
-            <div 
-              className={`relative flex flex-col items-center gap-3 transition-opacity duration-500 ${
-                loading ? 'opacity-100' : 'opacity-100'
-              }`}
+      <div className="w-full max-w-[1200px] rounded-3xl bg-white/90 p-6 shadow-sm border border-gray-200">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
+            <span className="font-semibold text-gray-900">선택 키워드</span>
+            {selectedKeywords.length > 0 ? (
+              selectedKeywords.slice(0, 3).map((keyword) => (
+                <span
+                  key={keyword}
+                  className="rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-600"
+                >
+                  {keyword}
+                </span>
+              ))
+            ) : (
+              <span className="text-gray-400">키워드를 선택하면 AI가 비교 인사이트를 생성해요.</span>
+            )}
+          </div>
+
+          {!hasGenerated ? (
+            <button
+              onClick={generateInsight}
+              disabled={loading || selectedKeywords.length === 0}
+              className="group relative flex w-full items-center justify-center gap-2 rounded-2xl px-8 py-4 text-white font-semibold shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? (
-                <div className="flex items-center gap-2 animate-in fade-in duration-300">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
-                  <p className="text-sm text-gray-600">AI 인사이트 생성 중...</p>
-                </div>
-              ) : (
-                <div className="text-center animate-in fade-in duration-700 max-w-4xl mx-auto">
-                  <p className="text-lg font-bold text-gray-900 mb-4 pb-3 border-b border-gray-200">
-                    "{topKeyword}" 상승폭 가장 높음
-                  </p>
-                  <div className="text-left space-y-3">
-                    {insight.split('. ').map((sentence, idx) => {
-                      if (!sentence.trim()) return null
-                      
-                      // 첫 문장은 강조
-                      if (idx === 0) {
-                        return (
-                          <p key={idx} className="text-base font-semibold text-gray-900 leading-relaxed">
-                            📊 {sentence.trim()}.
-                          </p>
-                        )
-                      }
-                      
-                      return (
-                        <p key={idx} className="text-sm leading-relaxed text-gray-700 pl-6">
-                          • {sentence.trim()}{sentence.endsWith('.') ? '' : '.'}
-                        </p>
-                      )
-                    })}
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-[#F2B0ED] to-[#CAB2F4] opacity-100 group-hover:opacity-0 transition-opacity duration-500" />
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-[#E85DD7] to-[#9D7DE8] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+              <Sparkles className="h-5 w-5 relative z-10" />
+              <span className="relative z-10">
+                {selectedKeywords.length === 0
+                  ? '키워드를 선택해주세요'
+                  : `${selectedKeywords.length}개 키워드 AI 인사이트 생성`}
+              </span>
+            </button>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <p className="text-sm text-gray-500">
+                  {selectedYear}년 {selectedMonth}월 · 최대 3개 키워드 비교
+                </p>
+                <button
+                  onClick={() => {
+                    setHasGenerated(false)
+                    setInsight(null)
+                    setErrorMessage("")
+                  }}
+                  className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-700"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  다시 생성
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-purple-100 bg-purple-50/60 p-5">
+                <p className="text-xs font-semibold text-purple-500 tracking-[0.3em] mb-2">답변 1</p>
+                <h4 className="text-lg font-semibold text-gray-900 mb-2">선택 키워드 정량 비교</h4>
+                {loading ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+                    AI가 비교 인사이트를 정리하는 중...
                   </div>
-                  <button
-                    onClick={() => {
-                      setHasGenerated(false)
-                      setInsight("")
-                      setTopKeyword("")
-                    }}
-                    className="mt-6 text-xs text-purple-600 hover:text-purple-700 underline transition-colors duration-200"
-                  >
-                    다시 생성
-                  </button>
+                ) : (
+                  <p className="text-sm leading-relaxed text-gray-700 whitespace-pre-line">
+                    {insight?.comparison || '비교 문장을 불러오지 못했습니다.'}
+                  </p>
+                )}
+              </div>
+
+              {errorMessage && (
+                <p className="text-sm text-red-500">{errorMessage}</p>
+              )}
+
+              {!errorMessage && insight && (
+                <div className={`grid grid-cols-1 gap-4 ${gridCols}`}>
+                  {insight.keywordInsights.map((item, idx) => (
+                    <div key={item.keyword} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-[0px_8px_20px_rgba(149,128,255,0.08)]">
+                      <p className="text-xs font-semibold text-gray-400 mb-1">답변 2-{idx + 1}</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-lg font-semibold text-gray-900">{item.keyword}</h5>
+                        <span className="text-xs font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded-full">
+                          {summarizeCategory(item.category)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-3">
+                        검색량 {item.metrics.volume.toLocaleString()}건 · 평균 대비 {item.metrics.growth >= 0 ? '+' : ''}{item.metrics.growth.toFixed(1)}%
+                      </p>
+                      <div className="space-y-2 text-sm text-gray-700">
+                        <div>
+                          <p className="font-semibold text-gray-900">상승/하락 이유</p>
+                          <p className="leading-relaxed">{item.reason}</p>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900">Wonder 마케팅 전략</p>
+                          <p className="leading-relaxed">{item.strategy}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
+
+          {!hasGenerated && errorMessage && (
+            <p className="text-sm text-red-500 text-center">{errorMessage}</p>
+          )}
+
+          <p className="text-xs text-gray-400 text-center">
+            중복 선택 포함 최대 3개의 키워드까지 AI 비교 인사이트를 제공합니다.
+          </p>
+        </div>
       </div>
     </div>
   )
