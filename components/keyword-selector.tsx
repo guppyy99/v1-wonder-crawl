@@ -36,22 +36,18 @@ function calculateGrowthRate(
   return { growth, volume: currentValue }
 }
 
-// 키워드별 색상 팔레트 (차트와 동일하게)
+// 키워드 선택 순서에 고정된 팔레트 (1: 보라, 2: 주황, 3: 초록)
 const COLOR_PALETTE = [
-  { bg: "bg-[#8B7FD8]", hover: "hover:bg-[#7a6fc7]", chart: "#8B7FD8" },
-  { bg: "bg-[#7ED957]", hover: "hover:bg-[#6ec847]", chart: "#7ED957" },
-  { bg: "bg-[#FF8C42]", hover: "hover:bg-[#e67b31]", chart: "#FF8C42" },
-  { bg: "bg-[#2AC1BC]", hover: "hover:bg-[#25aba7]", chart: "#2AC1BC" },
-  { bg: "bg-[#FFB84D]", hover: "hover:bg-[#e5a43d]", chart: "#FFB84D" },
-  { bg: "bg-[#FF6B6B]", hover: "hover:bg-[#e55b5b]", chart: "#FF6B6B" },
-  { bg: "bg-[#A78BFA]", hover: "hover:bg-[#967be0]", chart: "#A78BFA" },
-  { bg: "bg-[#34D399]", hover: "hover:bg-[#2ec389]", chart: "#34D399" },
-  { bg: "bg-[#F472B6]", hover: "hover:bg-[#e362a6]", chart: "#F472B6" },
-  { bg: "bg-[#FBBF24]", hover: "hover:bg-[#e1ab20]", chart: "#FBBF24" },
+  { bgClass: "bg-[#8B7FD8]", hoverClass: "hover:bg-[#7a6fc7]", chart: "#8B7FD8" },
+  { bgClass: "bg-[#FF8C42]", hoverClass: "hover:bg-[#e67b31]", chart: "#FF8C42" },
+  { bgClass: "bg-[#7ED957]", hoverClass: "hover:bg-[#6ec847]", chart: "#7ED957" },
 ]
 
 export const getKeywordColor = (index: number) => {
-  return COLOR_PALETTE[index % COLOR_PALETTE.length]
+  if (index < 0) {
+    return COLOR_PALETTE[0]
+  }
+  return COLOR_PALETTE[index] ?? COLOR_PALETTE[COLOR_PALETTE.length - 1]
 }
 
 export function KeywordSelector({
@@ -77,7 +73,8 @@ export function KeywordSelector({
       <div className="max-h-[600px] overflow-y-auto pr-2 space-y-2">
         {displayKeywords.map((keyword, index) => {
           const isSelected = selectedKeywords.includes(keyword)
-          const colorScheme = getKeywordColor(keywords.indexOf(keyword))
+          const selectionIndex = selectedKeywords.indexOf(keyword)
+          const colorScheme = isSelected ? getKeywordColor(selectionIndex) : null
           const keywordInfo = keywordData[keyword]
           
           let growthData = { growth: 0, volume: 0 }
@@ -90,8 +87,8 @@ export function KeywordSelector({
               key={keyword}
               onClick={() => onKeywordToggle(keyword)}
               className={`w-full rounded-lg px-4 py-3 text-left text-sm font-medium transition-all ${
-                isSelected 
-                  ? `${colorScheme.bg} ${colorScheme.hover} text-white shadow-sm` 
+                isSelected && colorScheme
+                  ? `${colorScheme.bgClass} ${colorScheme.hoverClass} text-white shadow-sm`
                   : "bg-gray-50 text-gray-600 hover:bg-gray-100"
               }`}
             >

@@ -15,17 +15,14 @@ interface TrendChartProps {
   selectedYear: number
 }
 
-// 키워드의 인덱스를 찾기 위한 헬퍼 함수
-function getKeywordIndex(keyword: string, allKeywords: string[]): number {
-  return allKeywords.indexOf(keyword)
-}
-
 export function TrendChart({ selectedKeywords, keywordData, timeRange, onTimeRangeChange, selectedYear, selectedMonth }: TrendChartProps) {
   const [tooltipData, setTooltipData] = useState<any>(null)
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 })
-  
-  // 전체 키워드 목록 (색상 인덱스를 유지하기 위해)
-  const allKeywords = Object.keys(keywordData)
+
+  const resolveKeywordColor = (keyword: string) => {
+    const idx = selectedKeywords.indexOf(keyword)
+    return getKeywordColor(idx === -1 ? 0 : idx).chart
+  }
 
   // Prepare chart data
   const prepareChartData = () => {
@@ -91,8 +88,7 @@ export function TrendChart({ selectedKeywords, keywordData, timeRange, onTimeRan
           </div>
           <div className="space-y-2">
             {payload.map((entry: any, index: number) => {
-              const keywordIdx = getKeywordIndex(entry.name, allKeywords)
-              const color = getKeywordColor(keywordIdx).chart
+              const color = resolveKeywordColor(entry.name)
               return (
                 <div key={index} className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-2">
@@ -156,8 +152,7 @@ export function TrendChart({ selectedKeywords, keywordData, timeRange, onTimeRan
         <div className="flex-1">
           <h3 className="mb-2 text-base font-medium text-gray-800 flex flex-wrap items-center gap-1">
             {selectedKeywords.map((keyword, idx) => {
-              const keywordIdx = getKeywordIndex(keyword, allKeywords)
-              const color = getKeywordColor(keywordIdx).chart
+              const color = resolveKeywordColor(keyword)
               return (
                 <span key={keyword}>
                   <span style={{ color }}>'{keyword}'</span>
@@ -201,8 +196,7 @@ export function TrendChart({ selectedKeywords, keywordData, timeRange, onTimeRan
           <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
             <defs>
               {selectedKeywords.map((keyword) => {
-                const keywordIdx = getKeywordIndex(keyword, allKeywords)
-                const color = getKeywordColor(keywordIdx).chart
+                const color = resolveKeywordColor(keyword)
                 const gradientId = `gradient-${keyword.replace(/\s/g, '-')}`
                 return (
                   <linearGradient key={keyword} id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -232,8 +226,7 @@ export function TrendChart({ selectedKeywords, keywordData, timeRange, onTimeRan
             />
             <Tooltip content={<CustomTooltip />} cursor={{ stroke: "#ddd", strokeWidth: 1 }} />
             {selectedKeywords.map((keyword) => {
-              const keywordIdx = getKeywordIndex(keyword, allKeywords)
-              const color = getKeywordColor(keywordIdx).chart
+              const color = resolveKeywordColor(keyword)
               const gradientId = `gradient-${keyword.replace(/\s/g, '-')}`
               return (
                 <Area

@@ -70,7 +70,6 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
   const [loading, setLoading] = useState(false)
   const [hasGenerated, setHasGenerated] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>("")
-  const allKeywords = useMemo(() => Object.keys(keywordData), [keywordData])
 
   const keywordSignature = useMemo(() => selectedKeywords.join('|'), [selectedKeywords])
 
@@ -162,11 +161,8 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
   }
 
   const getKeywordDisplayColor = (keyword: string) => {
-    const idx = allKeywords.indexOf(keyword)
-    if (idx === -1) {
-      return getKeywordColor(0).chart
-    }
-    return getKeywordColor(idx).chart
+    const idx = selectedKeywords.indexOf(keyword)
+    return getKeywordColor(idx === -1 ? 0 : idx).chart
   }
 
   const withAlpha = (hex: string, alpha: number) => {
