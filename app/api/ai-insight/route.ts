@@ -1,22 +1,24 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
+export const runtime = 'nodejs' // edge X
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-/* ────────────────────────────────────────────────
- * SERPER 검색
- * ──────────────────────────────────────────────── */
+/* ───────────────────────────────
+ * Serper 검색
+ * ─────────────────────────────── */
 async function searchWeb(keyword: string, year: number, month: number): Promise<string> {
-  const key = process.env.SERPER_API_KEY
-  if (!key) return ''
+  const serperApiKey = process.env.SERPER_API_KEY
+  if (!serperApiKey) return ''
 
   try {
     const res = await fetch('https://google.serper.dev/search', {
       method: 'POST',
       headers: {
-        'X-API-KEY': key,
+        'X-API-KEY': serperApiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -33,18 +35,18 @@ async function searchWeb(keyword: string, year: number, month: number): Promise<
     return (
       data.organic
         ?.slice(0, 5)
-        ?.map((it: any, idx: number) => `${idx + 1}. ${it.title}\n${it.snippet || ''}`)
+        ?.map((item: any, idx: number) => `${idx + 1}. ${item.title}\n${item.snippet || ''}`)
         .join('\n\n') || ''
     )
   } catch (e) {
-    console.error('Serper Error:', e)
+    console.error('Serper API error:', e)
     return ''
   }
 }
 
-/* ────────────────────────────────────────────────
+/* ───────────────────────────────
  * 키워드 분류
- * ──────────────────────────────────────────────── */
+ * ─────────────────────────────── */
 type Category = 'insurance' | 'sidejob' | 'unknown'
 
 function classifyKeyword(keyword: string): Category {
@@ -54,8 +56,8 @@ function classifyKeyword(keyword: string): Category {
   if (negative.some((n) => raw.includes(n))) return 'unknown'
 
   const insurance = [
-    '보험', '여행자보험', '운전자보험', '이혼보험', '태아보험', '암보험', '치아보험',
-    '펫보험', '주택화재보험', '종신보험', '연금 저축 보험'
+    '보험','여행자보험','운전자보험','펫보험','주택화재보험','이혼보험',
+    '태아보험','암보험','치아보험','종신보험','연금 저축 보험'
   ]
 
   const sidejob = [
@@ -66,57 +68,54 @@ function classifyKeyword(keyword: string): Category {
   ]
 
   const finance = [
-    '4대보험','국민연금','건보료','실업급여','퇴직금','퇴직연금','연말정산','종합소득세',
-    '부가세','자동차세','취득세','양도소득세','증여세','상속세','주택담보대출','전세자금대출',
-    '신용대출','마이너스통장','햇살론','개인회생','대출'
+    '4대보험','국민연금','건보료','실업급여','퇴직금','퇴직연금',
+    '연말정산','종합소득세','부가세','자동차세','취득세','양도소득세','증여세','상속세',
+    '주택담보대출','전세자금대출','신용대출','마이너스통장','햇살론','개인회생','대출'
   ]
 
-  if (insurance.some((i) => raw.includes(i))) return 'insurance'
-  if (sidejob.some((s) => raw.includes(s))) return 'sidejob'
-  if (finance.some((f) => raw.includes(f))) return 'sidejob'
+  if (insurance.some(i => raw.includes(i))) return 'insurance'
+  if (sidejob.some(s => raw.includes(s))) return 'sidejob'
+  if (finance.some(f => raw.includes(f))) return 'sidejob'
 
   return 'unknown'
 }
 
-/* ────────────────────────────────────────────────
- * 공통 USP
- * ──────────────────────────────────────────────── */
+/* ───────────────────────────────
+ * 원더 USP
+ * ─────────────────────────────── */
 const WONDER_BASE = `
 원더 핵심 USP:
-- 스마트폰으로 보험을 직접 설계하고, 가입 시 발생하는 수수료를 내가 가져가는 구조
-- 자격증 취득 → 설계 → 가입 → 정산까지 원스톱 프로세스
-- 교육자료 무료 제공 + 전문 매니저의 1:1 실전 지원
-- 고정비·재고·점포 없이 가능한 리스크 없는 부업
+- 스마트폰으로 보험을 직접 설계하고, 가입 시 수수료를 내가 가져가는 구조
+- 자격증 취득 → 설계 → 가입 → 정산까지 원스톱
+- 무료 교육자료 제공 + 전문 매니저 1:1 지원
+- 점포·고정비·재고 없이 가능한 안전한 부업
 `
 
-/* ────────────────────────────────────────────────
- * 세부 프롬프트
- * ──────────────────────────────────────────────── */
+/* ───────────────────────────────
+ * 프롬프트 생성기
+ * ─────────────────────────────── */
 function insurancePrompt(p: any) {
   return `
 당신은 원더(Wonder)의 보험 전략 컨설턴트입니다.
 
 ${WONDER_BASE}
 
-데이터:
-키워드: ${p.keyword}
-검색량: ${p.volume.toLocaleString()}건
-평균 대비: ${p.growth.toFixed(1)}%
-전월 대비: ${p.monthOverMonth}%
-추이: ${p.trendText}
+검색데이터:
+- 키워드: ${p.keyword}
+- 검색량: ${p.volume.toLocaleString()}건 / 평균 대비 ${p.growth.toFixed(1)}% / 전월 대비 ${p.monthOverMonth}%
+- 추이: ${p.trendText}
 
-웹 검색 결과:
+웹검색 요약:
 ${p.webSearchResults || '관련 자료 없음'}
 
-규칙:
-1) 첫 문장은 반드시 "검색량이 ${p.volume.toLocaleString()}건으로 평균 대비 ${p.growth.toFixed(1)}% ${
-    p.growth >= 0 ? '상승' : '하락'
-  }했습니다."로 시작.
-2) 웹검색이 보험과 무관하면 "실제 보험 관련이 아닌 동명의 콘텐츠로 보입니다."라고 명시.
-3) 그 후 키워드가 주는 이미지·상징을 활용해 보험 콘텐츠화 아이디어 제시 OR
-   보험 이슈 기반 원인 설명.
-4) 마지막 1~2문장은 반드시 원더 USP와 연결된 실전 메시지 + 예시 카피.
-5) 전체 3~5문장, 불릿·이모지 금지.
+작성 규칙:
+1) 첫 문장은 "검색량이 ${p.volume.toLocaleString()}건으로 평균 대비 ${p.growth.toFixed(
+    1
+  )}% ${p.growth >= 0 ? '상승' : '하락'}했습니다." 로 시작.
+2) 웹검색이 보험과 무관하면 “실제 보험이 아닌 동명의 콘텐츠로 보입니다.”라고 명시.
+3) 보험 관련 이슈라면 상승 원인 → 사회/제도/리스크 설명.
+4) 마지막 문장은 반드시 원더 USP 기반 제안 + 예시 카피 포함.
+5) 3~5문장, 불릿·이모지 금지.
 `
 }
 
@@ -126,25 +125,20 @@ function sidejobPrompt(p: any) {
 
 ${WONDER_BASE}
 
-데이터:
-키워드: ${p.keyword}
-검색량: ${p.volume.toLocaleString()}건
-평균 대비: ${p.growth.toFixed(1)}%
-전월 대비: ${p.monthOverMonth}%
-추이: ${p.trendText}
+검색데이터:
+- 키워드: ${p.keyword}
+- 검색량: ${p.volume.toLocaleString()}건 / 평균 대비 ${p.growth.toFixed(1)}% / 전월 대비 ${p.monthOverMonth}%
+- 추이: ${p.trendText}
 
-웹 검색 결과:
+웹검색 요약:
 ${p.webSearchResults || '관련 자료 없음'}
 
-규칙:
-1) 첫 문장은 반드시 "검색량이 ${p.volume.toLocaleString()}건으로 평균 대비 ${p.growth.toFixed(1)}% ${
-    p.growth >= 0 ? '상승' : '하락'
-  }했습니다."로 시작.
-2) 웹검색이 부업과 무관하면 “실제 부업과 직접적 관련이 없는 콘텐츠로 보입니다.”라고 명시.
-3) 관련 있는 경우: 경기·지출·세금·대출 등 경제적 요인을 기반으로 상승 원인 설명.
-4) 그 다음 문장: 기존 부업(알바/배달/앱테크)의 구조적 한계 제시.
-5) 마지막 문장: 원더를 대안으로 제시 + 예시 카피 1개 이상.
-6) 전체 3~5문장, 보고서 톤.
+작성 규칙:
+1) 첫 문장은 동일하게 시작.
+2) 웹검색이 부업과 무관한 엔터테인먼트면 “실제 부업과 관련 없는 콘텐츠로 보입니다.” 명시.
+3) 부업 관련이면 경기/지출/세금 요인 기반 상승 원인 설명.
+4) 기존 부업의 한계 → 원더 부업의 구조적 강점 설명.
+5) 예시 카피 필수.
 `
 }
 
@@ -154,39 +148,39 @@ function unknownPrompt(p: any) {
 
 ${WONDER_BASE}
 
-데이터:
-키워드: ${p.keyword}
-검색량: ${p.volume.toLocaleString()}건
-평균 대비: ${p.growth.toFixed(1)}%
-전월 대비: ${p.monthOverMonth}%
-추이: ${p.trendText}
+검색데이터:
+- 키워드: ${p.keyword}
+- 검색량: ${p.volume.toLocaleString()}건 / 평균 대비 ${p.growth.toFixed(1)}% / 전월 대비 ${p.monthOverMonth}%
+- 추이: ${p.trendText}
 
-웹 검색 결과:
+웹검색 요약:
 ${p.webSearchResults || '관련 자료 없음'}
 
-규칙:
-1) 첫 문장: "검색량이 ${p.volume.toLocaleString()}건으로 평균 대비 ${p.growth.toFixed(1)}% ${
-    p.growth >= 0 ? '상승' : '하락'
-  }했습니다."
-2) 웹검색 기반으로 보험/부업/엔터 중 어디에 더 가까운지 명확하게 판별.
-3) 엔터테인먼트면 “동명의 콘텐츠로 보입니다.”라고 명시 후 → 이미지 활용한 캠페인 아이디어로 연결.
-4) 마지막 문장 예시 카피 포함.
-5) 문단 형태, 3~5문장.
+작성 규칙:
+1) 시작 문장 동일.
+2) 키워드가 보험/부업/엔터 중 무엇에 가까운지 웹검색 근거로 판단.
+3) 엔터테인먼트면 “동명의 콘텐츠로 보입니다.” 명시 + 이미지 차용 방식으로 원더 연결.
+4) 마지막 문장 카피 포함.
+5) 3~5문장 보고서 톤.
 `
 }
 
-/* ────────────────────────────────────────────────
+/* ───────────────────────────────
  * POST Handler
- * ──────────────────────────────────────────────── */
+ * ─────────────────────────────── */
 export async function POST(req: Request) {
   try {
-    const data = await req.json()
-    const { keyword, growth, volume, year, month, previousMonths = [] } = data
+    const body = await req.json()
+    const { keyword, growth, volume, year, month, previousMonths = [] } = body
 
     const webSearchResults = await searchWeb(keyword, year, month)
-    const trendText = previousMonths.map((m: any) => `${m.month}: ${m.volume.toLocaleString()}건`).join(', ')
+
+    const trendText =
+      previousMonths.map((m: any) => `${m.month}: ${m.volume.toLocaleString()}건`).join(', ') || ''
+
     const prev = previousMonths[previousMonths.length - 2]
-    const mom = prev ? (((volume - prev.volume) / prev.volume) * 100).toFixed(1) : '0'
+    const prevVol = prev?.volume || 0
+    const mom = prevVol > 0 ? (((volume - prevVol) / prevVol) * 100).toFixed(1) : '0'
 
     const category = classifyKeyword(keyword)
 
@@ -196,9 +190,9 @@ export async function POST(req: Request) {
       volume,
       year,
       month,
-      monthOverMonth: mom,
       trendText,
       webSearchResults,
+      monthOverMonth: mom,
     }
 
     const prompt =
@@ -208,19 +202,29 @@ export async function POST(req: Request) {
         ? sidejobPrompt(params)
         : unknownPrompt(params)
 
-    const completion = await openai.responses.create({
+    const completion = await openai.chat.completions.create({
       model: 'gpt-5.1',
-      input: prompt,
-      reasoning: { effort: 'high' },
-      text: { verbosity: 'high' },
-      max_output_tokens: 600,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '당신은 보험과 부업 데이터를 해석하는 시니어 전략 컨설턴트입니다. 불릿포인트와 이모지를 사용하지 말고, 한국어 분석형 3~5문장으로 작성하세요.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 1500,
+      temperature: 0.2,
+      top_p: 1,
+      frequency_penalty: 0.2,
     })
 
-    const insight = completion.output_text || '인사이트 생성 실패'
+    const insight =
+      completion.choices?.[0]?.message?.content ||
+      '인사이트 생성 실패'
 
     return NextResponse.json({ insight, category })
   } catch (err: any) {
-    console.error(err)
+    console.error('ChatCompletion Error:', err)
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
