@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Sparkles, RefreshCw } from "lucide-react"
+import { getKeywordColor } from "./keyword-selector"
 import { calculateMonthlyGrowth } from "@/lib/csv-parser"
 import type { KeywordData, KeywordInfo } from "@/lib/types"
 
@@ -69,6 +70,7 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
   const [loading, setLoading] = useState(false)
   const [hasGenerated, setHasGenerated] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>("")
+  const allKeywords = useMemo(() => Object.keys(keywordData), [keywordData])
 
   const keywordSignature = useMemo(() => selectedKeywords.join('|'), [selectedKeywords])
 
@@ -159,6 +161,23 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
     }
   }
 
+  const getKeywordDisplayColor = (keyword: string) => {
+    const idx = allKeywords.indexOf(keyword)
+    if (idx === -1) {
+      return getKeywordColor(0).chart
+    }
+    return getKeywordColor(idx).chart
+  }
+
+  const withAlpha = (hex: string, alpha: number) => {
+    const normalized = hex.replace('#', '')
+    if (normalized.length !== 6) return hex
+    const alphaHex = Math.round(alpha * 255)
+      .toString(16)
+      .padStart(2, '0')
+    return `#${normalized}${alphaHex}`
+  }
+
   const gridCols = insight?.keywordInsights.length === 3
     ? 'md:grid-cols-3'
     : insight?.keywordInsights.length === 2
@@ -172,14 +191,22 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
           <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
             <span className="font-semibold text-gray-900">선택 키워드</span>
             {selectedKeywords.length > 0 ? (
-              selectedKeywords.slice(0, 3).map((keyword) => (
-                <span
-                  key={keyword}
-                  className="rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-600"
-                >
-                  {keyword}
-                </span>
-              ))
+              selectedKeywords.slice(0, 3).map((keyword) => {
+                const keywordColor = getKeywordDisplayColor(keyword)
+                return (
+                  <span
+                    key={keyword}
+                    className="rounded-full border px-3 py-1 text-xs font-medium"
+                    style={{
+                      color: keywordColor,
+                      borderColor: withAlpha(keywordColor, 0.4),
+                      backgroundColor: withAlpha(keywordColor, 0.08),
+                    }}
+                  >
+                    {keyword}
+                  </span>
+                )
+              })
             ) : (
               <span className="text-gray-400">키워드를 선택하면 AI가 비교 인사이트를 생성해요.</span>
             )}
@@ -220,7 +247,7 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
               </div>
 
               <div className="rounded-2xl border border-purple-100 bg-purple-50/60 p-5">
-                <p className="text-xs font-semibold text-purple-500 tracking-[0.3em] mb-2">답변 1</p>
+                <p className="text-xs font-semibold text-purple-500 tracking-[0.3em] mb-2">KEYWORDS INSIGHT</p>
                 <h4 className="text-lg font-semibold text-gray-900 mb-2">선택 키워드 정량 비교</h4>
                 {loading ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -240,30 +267,38 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
 
               {!errorMessage && insight && (
                 <div className={`grid grid-cols-1 gap-4 ${gridCols}`}>
-                  {insight.keywordInsights.map((item, idx) => (
-                    <div key={item.keyword} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-[0px_8px_20px_rgba(149,128,255,0.08)]">
-                      <p className="text-xs font-semibold text-gray-400 mb-1">답변 2-{idx + 1}</p>
-                      <div className="flex items-center justify-between mb-2">
-                        <h5 className="text-lg font-semibold text-gray-900">{item.keyword}</h5>
-                        <span className="text-xs font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded-full">
-                          {summarizeCategory(item.category)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-500 mb-3">
-                        검색량 {item.metrics.volume.toLocaleString()}건 · 평균 대비 {item.metrics.growth >= 0 ? '+' : ''}{item.metrics.growth.toFixed(1)}%
-                      </p>
-                      <div className="space-y-2 text-sm text-gray-700">
-                        <div>
-                          <p className="font-semibold text-gray-900">상승/하락 이유</p>
-                          <p className="leading-relaxed">{item.reason}</p>
+                  {insight.keywordInsights.map((item) => {
+                    const keywordColor = getKeywordDisplayColor(item.keyword)
+                    return (
+                      <div
+                        key={item.keyword}
+                        className="rounded-2xl border border-gray-100 bg-white p-4 shadow-[0px_8px_20px_rgba(149,128,255,0.08)]"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-lg font-semibold" style={{ color: keywordColor }}>
+                            {item.keyword}
+                          </h5>
+                          <span className="text-xs font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded-full">
+                            {summarizeCategory(item.category)}
+                          </span>
                         </div>
-                        <div>
-                          <p className="font-semibold text-gray-900">Wonder 마케팅 전략</p>
-                          <p className="leading-relaxed">{item.strategy}</p>
+                        <p className="text-xs text-gray-500 mb-3">
+                          검색량 {item.metrics.volume.toLocaleString()}건 · 평균 대비 {item.metrics.growth >= 0 ? '+' : ''}
+                          {item.metrics.growth.toFixed(1)}%
+                        </p>
+                        <div className="space-y-2 text-sm text-gray-700">
+                          <div>
+                            <p className="font-semibold text-gray-900">상승/하락 이유</p>
+                            <p className="leading-relaxed">{item.reason}</p>
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-900">Wonder 마케팅 전략</p>
+                            <p className="leading-relaxed">{item.strategy}</p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
