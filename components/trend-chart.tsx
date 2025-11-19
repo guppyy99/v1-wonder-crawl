@@ -74,66 +74,83 @@ export function TrendChart({ selectedKeywords, keywordData, timeRange, onTimeRan
   const genderStats = calculateGenderStats()
 
   const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length > 0) {
-      const data = payload[0].payload
-      
-      // 첫 번째 키워드 정보 (대표로 표시)
-      const firstKeyword = selectedKeywords[0]
-      const keywordInfo = keywordData[firstKeyword]
-
-      return (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-lg max-w-xs">
-          <div className="mb-3 border-b border-gray-100 pb-2">
-            <p className="text-xs font-medium text-gray-500">{data.month}</p>
-          </div>
-          <div className="space-y-2">
-            {payload.map((entry: any, index: number) => {
-              const color = resolveKeywordColor(entry.name)
-              return (
-                <div key={index} className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: color }}
-                    />
-                    <span className="text-sm font-medium text-gray-700">{entry.name}</span>
-                  </div>
-                  <span className="text-sm font-semibold text-gray-900">{entry.value.toLocaleString()}</span>
-                </div>
-              )
-            })}
-          </div>
-
-          {keywordInfo && (
-            <div className="mt-3 space-y-1.5 border-t border-gray-100 pt-3">
-              <div className="mb-2">
-                <p className="text-xs font-medium text-gray-700 mb-1.5">{firstKeyword} 상세 정보</p>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">남성</span>
-                <span className="font-semibold text-blue-600">{keywordInfo.malePercent.toFixed(1)}%</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-600">여성</span>
-                <span className="font-semibold text-pink-600">{keywordInfo.femalePercent.toFixed(1)}%</span>
-              </div>
-              <div className="mt-2 pt-2 border-t border-gray-100">
-                <p className="text-xs font-medium text-gray-700 mb-1.5">연령대별</p>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                  {Object.entries(keywordInfo.ageGroups).map(([age, percent]) => (
-                    <div key={age} className="flex justify-between text-xs">
-                      <span className="text-gray-600">{age}</span>
-                      <span className="font-medium text-gray-800">{percent.toFixed(1)}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )
+    if (!active || !payload || payload.length === 0) {
+      return null
     }
-    return null
+
+    const data = payload[0].payload
+    const keywordDetails = selectedKeywords
+      .map((keyword) => ({ keyword, info: keywordData[keyword] }))
+      .filter((item) => Boolean(item.info))
+
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-lg max-w-3xl">
+        <div className="mb-3 border-b border-gray-100 pb-2">
+          <p className="text-xs font-medium text-gray-500">{data.month}</p>
+        </div>
+        <div className="space-y-2">
+          {payload.map((entry: any, index: number) => {
+            const color = resolveKeywordColor(entry.name)
+            return (
+              <div key={index} className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-sm font-medium text-gray-700">{entry.name}</span>
+                </div>
+                <span className="text-sm font-semibold text-gray-900">{entry.value.toLocaleString()}</span>
+              </div>
+            )
+          })}
+        </div>
+
+        {keywordDetails.length > 0 && (
+          <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
+            <p className="text-xs font-medium text-gray-700">키워드별 상세 정보</p>
+            <div className="flex flex-wrap gap-2">
+              {keywordDetails.map(({ keyword, info }) => {
+                if (!info) return null
+                const color = resolveKeywordColor(keyword)
+                return (
+                  <div
+                    key={keyword}
+                    className="flex-1 min-w-[180px] rounded-xl border border-gray-100 bg-gray-50/70 p-3"
+                  >
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+                        <span className="text-xs font-semibold" style={{ color }}>
+                          {keyword}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-medium text-gray-500">성별 · 연령</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600">남성</span>
+                      <span className="font-semibold text-blue-600">{info.malePercent.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600">여성</span>
+                      <span className="font-semibold text-pink-600">{info.femalePercent.toFixed(1)}%</span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
+                      {Object.entries(info.ageGroups).map(([age, percent]) => (
+                        <div key={`${keyword}-${age}`} className="flex items-center justify-between text-gray-600">
+                          <span>{age}</span>
+                          <span className="font-medium text-gray-800">{percent.toFixed(1)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    )
   }
 
   if (selectedKeywords.length === 0) {

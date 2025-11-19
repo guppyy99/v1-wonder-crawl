@@ -242,16 +242,16 @@ export function AIInsight({ selectedYear, selectedMonth, keywordData, selectedKe
                 </button>
               </div>
 
-              <div className="rounded-2xl border border-purple-100 bg-purple-50/60 p-5">
+              <div className="rounded-2xl border border-purple-100 bg-purple-50/60 p-5 text-center">
                 <p className="text-xs font-semibold text-purple-500 tracking-[0.3em] mb-2">KEYWORDS INSIGHT</p>
                 <h4 className="text-lg font-semibold text-gray-900 mb-2">선택 키워드 정량 비교</h4>
                 {loading ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <div className="flex items-center justify-center gap-2 text-sm text-gray-500 text-center">
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
                     AI가 비교 인사이트를 정리하는 중...
                   </div>
                 ) : (
-                  <p className="text-sm leading-relaxed text-gray-700 whitespace-pre-line">
+                  <p className="text-sm leading-relaxed text-gray-700 whitespace-pre-line text-center">
                     {insight?.comparison || '비교 문장을 불러오지 못했습니다.'}
                   </p>
                 )}
