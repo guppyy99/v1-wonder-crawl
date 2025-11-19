@@ -1,212 +1,277 @@
 import { NextResponse } from 'next/server'
+import OpenAI from 'openai'
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+})
 
 /**
- * Serper API를 통해 실제 웹 검색 결과를 가져옵니다
+ * ────────────────────────────────────────────────
+ * Serper 웹검색
+ * ────────────────────────────────────────────────
  */
 async function searchWeb(keyword: string, year: number, month: number): Promise<string> {
   const serperApiKey = process.env.SERPER_API_KEY
-  
-  if (!serperApiKey) {
-    return '' // Serper API 키가 없으면 검색 건너뛰기
-  }
-  
+  if (!serperApiKey) return ''
+
   try {
-    // 검색 쿼리: "키워드 2025년 7월" 형식
-    const searchQuery = `${keyword} ${year}년 ${month}월 트렌드 이슈`
-    
+    const query = `${keyword} ${year}년 ${month}월 트렌드 이슈`
     const response = await fetch('https://google.serper.dev/search', {
       method: 'POST',
       headers: {
         'X-API-KEY': serperApiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        q: searchQuery,
-        gl: 'kr', // 한국 검색 결과
-        hl: 'ko', // 한국어
-        num: 5,   // 상위 5개 결과
-      }),
+      body: JSON.stringify({ q: query, gl: 'kr', hl: 'ko', num: 5 }),
     })
-    
-    if (!response.ok) {
-      console.error('Serper API 오류:', response.statusText)
-      return ''
-    }
-    
+
+    if (!response.ok) return ''
     const data = await response.json()
-    
-    // 검색 결과 요약
-    const searchResults = data.organic?.slice(0, 5).map((item: any, idx: number) => 
-      `${idx + 1}. ${item.title}\n${item.snippet || ''}`
-    ).join('\n\n') || ''
-    
-    return searchResults
-  } catch (error) {
-    console.error('웹 검색 중 오류:', error)
+
+    return (
+      data.organic
+        ?.slice(0, 5)
+        ?.map((item: any, idx: number) => `${idx + 1}. ${item.title}\n${item.snippet || ''}`)
+        .join('\n\n') || ''
+    )
+  } catch (err) {
+    console.error('Serper API 오류:', err)
     return ''
   }
 }
 
-export async function POST(request: Request) {
+/**
+ * ────────────────────────────────────────────────
+ * 키워드 분류 (보험 / 부업 / 기타)
+ * ────────────────────────────────────────────────
+ */
+type KeywordCategory = 'insurance' | 'sidejob' | 'unknown'
+
+function classifyKeyword(keyword: string): KeywordCategory {
+  const raw = keyword.trim()
+  const k = raw.toLowerCase()
+
+  // 예외 노이즈
+  const negative = ['제시카 알바', '쉐어하우스 웹드라마']
+  if (negative.some((p) => raw.includes(p))) return 'unknown'
+
+  // 보험 토큰
+  const insuranceTokens = [
+    '보험', '여행자보험', '운전자보험', '펫보험', '주택화재보험', '이혼보험',
+    '태아보험', '암보험', '치아보험', '종신보험', '연금 저축 보험'
+  ]
+
+  // 알바/부업 토큰
+  const sidejobTokens = [
+    '알바', '아르바이트', '단기알바', '일당 아르바이트', '알바천국', '알바몬',
+    '쿠팡 알바', '대리운전', '입주청소', '포장이사', '반포장이사', '맘시터',
+    '재택 알바', '앱테크', '디지털 노마드', '소자본 창업', '부동산 경매',
+    '크몽', '숨고', '티스토리', '워드프레스', '블로그 체험단',
+    '유튜브 수익', '영상 편집', '영상 편집 프로그램',
+    '네이버 스마트스토어', '쿠팡 파트너스', '쿠팡파트너스'
+  ]
+
+  // 세금/연금/대출(지출 압박) → 부업 니즈로 분류
+  const financeTokens = [
+    '4대보험', '국민연금', '건보료', '실업급여', '퇴직금', '퇴직연금',
+    '연말정산', '종합소득세', '부가세', '재산세', '자동차세',
+    '취득세', '양도소득세', '증여세', '상속세',
+    '주택담보대출', '전세자금대출', '신용대출', '마이너스통장',
+    '햇살론', '개인회생', '소액 대출', '프리랜서 대출', '학자금대출',
+  ]
+
+  if (insuranceTokens.some((p) => raw.includes(p))) return 'insurance'
+  if (sidejobTokens.some((p) => raw.includes(p))) return 'sidejob'
+  if (financeTokens.some((p) => raw.includes(p))) return 'sidejob'
+
+  return 'unknown'
+}
+
+/**
+ * ────────────────────────────────────────────────
+ * 원더 USP 공통 블록
+ * ────────────────────────────────────────────────
+ */
+const WONDER_BASE = `
+**원더 핵심 USP**:
+- 핸드폰으로 간편하게 보험을 설계하고, 가입하면 수수료도 내가 가져가는 플랫폼
+- 설계사에게 주던 보험 수수료를 내가 직접 가져가는 구조
+- 자격증 → 설계 → 가입 → 정산까지 원스톱
+- 보험 설계·가입에 필요한 교육자료 무료 제공
+- 리스크·고정비 없이 가능한 부업
+- 초보도 가능한 1:1 매니저 지원
+`
+
+/**
+ * ────────────────────────────────────────────────
+ * 보험 키워드용 프롬프트
+ * ────────────────────────────────────────────────
+ */
+function buildInsurancePrompt(p: any) {
+  return `
+당신은 원더(Wonder)의 **보험 상품 마케팅 전략 컨설턴트**입니다.
+
+${WONDER_BASE}
+
+# 검색 데이터
+- **키워드**: ${p.keyword}
+- **시점**: ${p.year}년 ${p.month}월
+- **검색량**: ${p.volume.toLocaleString()}건
+- **평균 대비**: ${p.growth > 0 ? '+' : ''}${p.growth.toFixed(1)}%
+- **전월 대비**: ${p.monthOverMonth}%
+
+최근 6개월 추이:
+${p.trendText}
+
+${p.webSearchResults ? `웹 검색 결과:\n${p.webSearchResults}` : ''}
+
+# 작성 지침 (보험 키워드)
+- 해당 보험 키워드가 상승한 이유(만기, 출산, 제도변경, 사회이슈 등)를 1문장
+- 그 보험 상품/보장을 원더에서 직접 설계하고 수수료를 가져갈 수 있다는 혜택을 1–2문장
+- 전체 2–3문장
+
+# 출력 형식 (예시 구조)
+검색량이 ${p.volume.toLocaleString()}건으로 평균 대비 X% 상승했습니다. [보험 니즈 상승 원인]. [원더에서 직접 설계·가입하고 수수료를 가져가는 액션].
+`
+}
+
+/**
+ * ────────────────────────────────────────────────
+ * 부업 키워드용 프롬프트
+ * ────────────────────────────────────────────────
+ */
+function buildSideJobPrompt(p: any) {
+  return `
+당신은 원더(Wonder)의 **부업/N잡 마케팅 전략 컨설턴트**입니다.
+
+${WONDER_BASE}
+
+# 검색 데이터
+- **키워드**: ${p.keyword}
+- **시점**: ${p.year}년 ${p.month}월
+- **검색량**: ${p.volume.toLocaleString()}건
+- **평균 대비**: ${p.growth > 0 ? '+' : ''}${p.growth.toFixed(1)}%
+- **전월 대비**: ${p.monthOverMonth}%
+
+최근 6개월 추이:
+${p.trendText}
+
+${p.webSearchResults ? `웹 검색 결과:\n${p.webSearchResults}` : ''}
+
+# 작성 지침 (부업 키워드)
+- 지출/경제/대출/세금 등으로 인해 해당 부업 키워드 검색이 증가한 배경을 1문장
+- 그 타겟에게 원더를 "리스크·고정비 없이 가능한 보험 부업"으로 제안하는 액션 1–2문장
+- 전체 2–3문장
+
+# 출력 형식 (예시 구조)
+검색량이 ${p.volume.toLocaleString()}건으로 평균 대비 X% 상승했습니다. [부업 검색 증가 원인]. [원더 부업으로 연결하는 커뮤니케이션].
+`
+}
+
+/**
+ * ────────────────────────────────────────────────
+ * unknown 키워드용 프롬프트
+ * ────────────────────────────────────────────────
+ */
+function buildGenericPrompt(p: any) {
+  return `
+당신은 원더(Wonder)의 **통합 마케팅 전략 컨설턴트**입니다.
+
+${WONDER_BASE}
+
+# 검색 데이터
+- **키워드**: ${p.keyword}
+- **검색량**: ${p.volume.toLocaleString()}건
+
+최근 6개월 추이:
+${p.trendText}
+
+${p.webSearchResults ? `웹 검색 결과:\n${p.webSearchResults}` : ''}
+
+# 작성 지침
+- 이 키워드가 보험/부업 중 어느 쪽 니즈에 가까운지 1문장
+- 해당 방향에서 원더를 자연스럽게 연결하는 actionable 제안 1–2문장
+- 전체 2–3문장
+`
+}
+
+/**
+ * ────────────────────────────────────────────────
+ * POST Handler
+ * ────────────────────────────────────────────────
+ */
+export async function POST(req: Request) {
   try {
-    const { keyword, growth, volume, year, month, monthlyData, previousMonths } = await request.json()
-    
-    const apiKey = process.env.OPENAI_API_KEY
-    
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'OpenAI API key가 설정되지 않았습니다.' },
-        { status: 500 }
-      )
+    const body = await req.json()
+    const {
+      keyword,
+      growth,
+      volume,
+      year,
+      month,
+      previousMonths = [],
+    } = body
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: 'OpenAI API key가 없습니다.' }, { status: 500 })
     }
-    
-    // 실제 웹 검색 수행
+
+    // 웹 검색
     const webSearchResults = await searchWeb(keyword, year, month)
-    
-    // 월별 검색량 추이 문자열 생성
-    const trendText = previousMonths?.map((m: any) => `${m.month}: ${m.volume.toLocaleString()}건`).join(', ') || ''
-    
-    // 전월 대비 변화율 계산
-    const prevMonthVolume = previousMonths?.[previousMonths.length - 2]?.volume || 0
-    const monthOverMonth = prevMonthVolume > 0 
-      ? ((volume - prevMonthVolume) / prevMonthVolume * 100).toFixed(1)
-      : '0'
-    
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-5.1',
-        input: `당신은 원더(Wonder) 서비스 마케팅 전략 컨설턴트입니다.
 
-# 원더 서비스 특성
+    // 추이 텍스트
+    const trendText =
+      previousMonths
+        .map((m: any) => `${m.month}: ${m.volume.toLocaleString()}건`)
+        .join(', ') || ''
 
-**핵심 USP**:
-1. 핸드폰으로 간편하게 보험을 설계하고, 가입하면 수수료도 내가 받을 수 있는 플랫폼
-2. 본래 보험이란 설계사를 통해 가입해, 설계사가 내 보험 가입 수수료를 받아가는 구조지만, 원더는 내가 설계부터 가입, 그리고 수수료도 받아갈 수 있음
-3. 자격증→설계→가입→정산까지 원스톱 간편 프로세스
-4. 보험 설계, 가입에 필요한 보험 자격증 교육 자료 무료 제공
-5. 리스크·고정비 없는 부담 없이 할 수 있는 부업
-6. 설계에 자신이 없어도 전문 매니저의 1:1 설계·운영 지원
+    const prevMonth = previousMonths[previousMonths.length - 2]
+    const prevVol = prevMonth?.volume || 0
+    const monthOverMonth =
+      prevVol > 0 ? (((volume - prevVol) / prevVol) * 100).toFixed(1) : '0'
 
-**타겟 고객**:
-- 추가 소득이 필요한 주부, 직장인
-- 보험 만기일이 다가오는 40대
-- 부업, N잡에 관심이 많은 타겟군
+    // 분류
+    const category = classifyKeyword(keyword)
 
-# 역할
-
-검색 키워드 트렌드를 분석하여:
-1. 해당 키워드의 추이가 내려가거나, 올라간 이유가 원더 서비스와 어떻게 연결되는지
-2. 원더의 주요 USP와의 상관관계
-3. 원더 마케팅에 활용할 수 있는 구체적 액션
-4. 타겟 고객 공략 방안
-
-# 답변 스타일
-
-- 보험 시즈널 특성 혹은 지출이 많아지는 특성 관점에서 분석
-- 원더 서비스 특성과 연결된 마케팅 액션 제시
-- 구체적 숫자 기반, 2-3문장
-- 해당 시점에 실행 가능한 전략 중심으로 작성
-
----
-
-# 실제 검색 데이터 분석
-
-**키워드**: "${keyword}"
-**시점**: ${year}년 ${month}월
-**검색량**: ${volume.toLocaleString()}건
-**평균 대비**: ${growth > 0 ? '+' : ''}${growth.toFixed(1)}%
-**전월 대비**: ${monthOverMonth}%
-
-**최근 6개월 추이**:
-${trendText}
-
-${webSearchResults ? `\n# 실제 웹 검색 결과 (네이버/구글 최신 정보)\n\n${webSearchResults}\n` : ''}
-
-# 분석 요구사항
-
-위의 **실제 검색 데이터**${webSearchResults ? '와 **웹 검색 결과**' : ''}를 종합하여 **보험/부업 관리 관점**에서 다음을 **2-3문장**으로 작성:
-
-1. **키워드 트렌드와 원더와의 연관성**
-   - 키워드에 왜 이런 변화가 발생했는지
-   - ${webSearchResults ? '웹 검색에서 발견한 실제 이슈/이벤트' : '보험, 지출 관점, 사회적 이벤트'}
-   
-2. **원더 마케팅 액션**
-   - 이 키워드 트렌드를 활용한 원더 커뮤니케이션 전략
-   - 타겟 고객층 (연령대, 관심사)
-   - 메시징 방향 (지출이 나가는 순간, 소득 관점, 상품에 대한 니즈 + 수수료도 내꺼 등)
-   - 광고 채널 및 시기 (데이터의 근거한)
-   
-3. **다음 달 예상 및 대응**
-   - 트렌드 지속 여부
-   - 선제적 마케팅 준비사항
-
-# 답변 형식 (보험/부업 커뮤니케이션 중심)
-
-검색량이 ${volume.toLocaleString()}건으로 평균 대비 ${Math.abs(Math.round(growth))}% 상승했습니다. [검색어 기반 키워드 상승 원인 분석 1문장]. [원더와 연결한 구체적 마케팅 액션 1-2문장].
-
-# 예시
-
-{부가세}검색량이 5,367,700건으로 평균 대비 461% 상승했습니다. 해당 시기에 부가세 납부가 있어 상승된 것으로 보입니다. 이는, 해당 시즌은 돈이 나가는 시즌임을 의미하며, 해당 시즌에는 '세금 지출'을 소구한 메시지를 담는 것이 효과적입니다. '부가세 신고 시기마다 지출 압박을 줄일 수 있는 보조 소득 마련', '세금 나가는 달 대비, 안정적인 부업 수입 확보'와 같은 메시지를 제안드립니다.`,
-        reasoning: { 
-          effort: 'medium' 
-        },
-        text: { 
-          verbosity: 'medium' 
-        },
-        max_output_tokens: 600,
-      }),
-    })
-    
-    if (!response.ok) {
-      // OpenAI API의 실제 에러 응답 읽기
-      let errorMessage = `OpenAI API 오류: ${response.status} ${response.statusText}`
-      try {
-        const errorData = await response.json()
-        console.error('❌ OpenAI API 에러 응답:', errorData)
-        errorMessage = errorData.error?.message || errorData.message || errorMessage
-        if (errorData.error?.code) {
-          errorMessage = `[${errorData.error.code}] ${errorMessage}`
-        }
-      } catch (e) {
-        const errorText = await response.text()
-        console.error('❌ OpenAI API 에러 텍스트:', errorText)
-        errorMessage = errorText || errorMessage
-      }
-      throw new Error(errorMessage)
+    const params = {
+      keyword,
+      growth,
+      volume,
+      year,
+      month,
+      previousMonths,
+      monthOverMonth,
+      trendText,
+      webSearchResults,
     }
-    
-    const data = await response.json()
-    console.log('✅ OpenAI 응답 성공:', data)
-    
-    const insight = data.output_text || '인사이트를 생성할 수 없습니다.'
-    
-    return NextResponse.json({ insight })
-  } catch (error: any) {
-    console.error('❌ AI 인사이트 생성 중 오류:', error)
-    console.error('에러 상세:', {
-      message: error.message,
-      stack: error.stack,
-      name: error.name
+
+    const prompt =
+      category === 'insurance'
+        ? buildInsurancePrompt(params)
+        : category === 'sidejob'
+        ? buildSideJobPrompt(params)
+        : buildGenericPrompt(params)
+
+    // gpt-5.1-chat-latest 호출
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-5.1-chat-latest',
+      messages: [
+        { role: 'system', content: '당신은 보험/부업 마케팅 전략을 만드는 전문가입니다.' },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 600,
+      temperature: 0.2,
     })
-    
-    // 로컬 개발 환경에서 더 상세한 에러 정보 제공
-    const isDevelopment = process.env.NODE_ENV === 'development'
-    const errorDetails = isDevelopment ? {
-      message: error.message,
-      stack: error.stack,
-      name: error.name
-    } : undefined
-    
+
+    const insight =
+      completion.choices?.[0]?.message?.content ||
+      '인사이트 생성 실패: 응답 없음'
+
+    return NextResponse.json({ insight, category })
+  } catch (err: any) {
+    console.error('AI 인사이트 생성 오류:', err)
     return NextResponse.json(
-      { 
-        error: `AI 인사이트 생성 실패: ${error.message || '알 수 없는 오류'}`,
-        ...(errorDetails && { details: errorDetails })
-      },
+      { error: err.message || '알 수 없는 오류' },
       { status: 500 }
     )
   }
